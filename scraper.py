@@ -1,69 +1,56 @@
 import csv
-import json
-import re
-from bs4 import BeautifulSoup
-from curl_cffi import requests
+import requests
 
-URL = "https://www.winamax.fr/paris-sportifs/sports/1"
+API_KEY = "b07f1923393d0311948f6fb29a279dc3"
+SPORT = "soccer_france_ligue_one"
+URL = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds/"
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+params = {
+    "api_key": API_KEY,
+    "regions": "eu",
+    "markets": "h2h",
+    "bookmakers": "winamax"
 }
 
-print("Connexion à Winamax...")
-res = requests.get(URL, headers=headers, impersonate="chrome120")
+print("Récupération des cotes Winamax via l'API...")
+response = requests.get(URL, params=params)
 
-if res.status_code != 200:
-    print(f"Erreur HTTP : {res.status_code}")
+if response.status_code != 200:
+    print(f"Erreur API : {response.status_code} - {response.text}")
     exit(1)
 
-# Recherche de l'état initial injecté dans la page
-match_json = re.search(r"var PRELOADED_STATE = ({.*?});</script>", res.text)
-
-if not match_json:
-    # Alternative si la variable a un autre nom
-    soup = BeautifulSoup(res.text, "html.parser")
-    script_tag = soup.find("script", id="__NEXT_DATA__")
-    if script_tag:
-        data = json.loads(script_tag.string)
-    else:
-        print("Structure introuvable ou blocage du serveur.")
-        exit(1)
-else:
-    data = json.loads(match_json.group(1))
-
-matches = data.get("matches", {})
-bets = data.get("bets", {})
-outcomes = data.get("outcomes", {})
-
+data = response.json()
 resultats = []
 
-for match_id, match in matches.items():
-    titre = match.get("title", "")
-    main_bet_id = match.get("mainBetId")
-    if not main_bet_id or str(main_bet_id) not in bets:
-        continue
+for match in data:
+    equipe_dom = match.get("home_team")
+    equipe_ext = match.get("away_team")
+    match_str = f"{equipe_dom} - {equipe_ext}"
+    date_str = match.get("commence_time", "").replace("T", " ").replace("Z", "")
 
-    bet = bets[str(main_bet_id)]
-    outcome_ids = bet.get("outcomes", [])
-    
-    cotes = []
-    for o_id in outcome_ids:
-        outcome = outcomes.get(str(o_id), {})
-        cote_val = outcome.get("odds")
-        if cote_val:
-            cote_decimale = cote_val if cote_val < 50 else cote_val / 100
-            cotes.append(round(cote_decimale, 2))
-
-    if len(cotes) == 3:
-        resultats.append({"Match": titre, "Cote 1": cotes[0], "Cote N": cotes[1], "Cote 2": cotes[2]})
-    elif len(cotes) == 2:
-        resultats.append({"Match": titre, "Cote 1": cotes[0], "Cote N": "-", "Cote 2": cotes[1]})
+    for bookmaker in match.get("bookmakers", []):
+        if bookmaker.get("key") == "winamax":
+            for market in bookmaker.get("markets", []):
+                if market.get("key") == "h2h":
+                    outcomes = market.get("outcomes", [])
+                    c1, cn, c2 = "-", "-", "-"
+                    for out in outcomes:
+                        if out.get("name") == equipe_dom:
+                            c1 = out.get("price")
+                        elif out.get("name") == equipe_ext:
+                            c2 = out.get("price")
+                        elif out.get("name") == "Draw":
+                            cn = out.get("price")
+                    resultats.append({
+                        "Date": date_str,
+                        "Match": match_str,
+                        "Cote 1": c1,
+                        "Cote N": cn,
+                        "Cote 2": c2
+                    })
 
 with open("cotes_winamax.csv", mode="w", newline="", encoding="utf-8-sig") as f:
-    writer = csv.DictWriter(f, fieldnames=["Match", "Cote 1", "Cote N", "Cote 2"], delimiter=";")
+    writer = csv.DictWriter(f, fieldnames=["Date", "Match", "Cote 1", "Cote N", "Cote 2"], delimiter=";")
     writer.writeheader()
     writer.writerows(resultats)
 
