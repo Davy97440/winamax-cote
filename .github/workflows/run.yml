@@ -1,0 +1,28 @@
+name: Recuperation cotes Winamax
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dépendances
+        run: pip install curl_cffi
+
+      - name: Exécuter le script
+        run: python scraper.py
+
+      - name: Sauvegarder le fichier CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: cotes-winamax
+          path: cotes_winamax.csv
